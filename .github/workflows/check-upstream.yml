@@ -1,0 +1,29 @@
+name: 檢查原作者更新
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取得目前專案
+        uses: actions/checkout@v4
+
+      - name: 準備 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 下載原作者最新版並產生安全預覽
+        run: node tools/sync-upstream.mjs
+
+      - name: 保存預覽檔案
+        uses: actions/upload-artifact@v4
+        with:
+          name: funbox-line-preview
+          path: preview/
+          if-no-files-found: error
