@@ -942,7 +942,7 @@
             // 自動事件中的新分頁通常會被 iPhone 阻擋，因此改用目前頁面導向。
             // LINE 的 Universal Link 若成功接手，回到 Safari 時本頁仍可繼續下一輪。
             window.location.assign(target.product.url);
-        }, 1200);
+        }, 100);
     }
 
     function toggleAutoChain() {
