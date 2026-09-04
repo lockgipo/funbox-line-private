@@ -18,12 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 取得目前專案
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 準備 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
+          package-manager-cache: false
 
       - name: 驗證並套用原作者最新版
         run: node tools/sync-upstream.mjs --apply
