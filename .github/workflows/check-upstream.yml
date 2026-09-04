@@ -1,13 +1,20 @@
-name: 檢查原作者更新
+name: 自動同步原作者更新
 
 on:
+  schedule:
+    # 每小時第 17 分執行；GitHub 使用 UTC，但每小時排程不受時區影響。
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: sync-funbox-upstream
+  cancel-in-progress: false
 
 jobs:
-  build-preview:
+  sync-and-publish:
     runs-on: ubuntu-latest
     steps:
       - name: 取得目前專案
@@ -18,12 +25,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: 下載原作者最新版並產生安全預覽
-        run: node tools/sync-upstream.mjs
+      - name: 驗證並套用原作者最新版
+        run: node tools/sync-upstream.mjs --apply
 
-      - name: 保存預覽檔案
-        uses: actions/upload-artifact@v4
-        with:
-          name: funbox-line-preview
-          path: preview/
-          if-no-files-found: error
+      - name: 發布通過檢查的更新
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "原作者內容沒有變化，不需要發布。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Auto-sync upstream draw links"
+          git push

@@ -163,13 +163,25 @@ function validateUpstream(html) {
     throw new Error("找不到原作者連續抽選程式所在的 <script> 區塊");
   }
   const upstreamScript = html.slice(scriptStart, scriptEndStart + "</script>".length);
+  const allScripts = html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) || [];
+  const supportingScripts = allScripts.filter((script) => script !== upstreamScript);
+  if (!supportingScripts.length) {
+    throw new Error("找不到原作者頁面的其他必要程式");
+  }
+
+  const links = extractDrawLinks(html);
+  const invalidLinks = links.filter((link) => !/^https:\/\/lin\.ee\/[A-Za-z0-9]+(?:[?#].*)?$/.test(link));
+  if (invalidLinks.length) {
+    throw new Error(`發現不允許的抽獎網址：${invalidLinks[0]}`);
+  }
 
   return {
     markers,
     counts,
-    links: extractDrawLinks(html),
+    links,
     pageSha256: sha256(html),
     scriptSha256: sha256(upstreamScript),
+    supportingScriptsSha256: sha256(supportingScripts.join("\n<!-- script-boundary -->\n")),
   };
 }
 
@@ -186,6 +198,11 @@ async function validateBaseline(validation) {
   if (baseline.continuousDrawScriptSha256 !== validation.scriptSha256) {
     throw new Error(
       "原作者的連續抽選程式已改變。為避免漏掉新邏輯，請先人工比較並更新自訂模組與 upstream-baseline.json",
+    );
+  }
+  if (baseline.supportingScriptsSha256 !== validation.supportingScriptsSha256) {
+    throw new Error(
+      "原作者的其他頁面程式已改變。為避免自動發布不相容內容，請先人工比較並更新 upstream-baseline.json",
     );
   }
 }
@@ -293,6 +310,7 @@ async function main() {
     drawLinks: result.links,
     upstreamPageSha256: validation.pageSha256,
     upstreamScriptSha256: validation.scriptSha256,
+    supportingScriptsSha256: validation.supportingScriptsSha256,
   }, null, 2));
 }
 

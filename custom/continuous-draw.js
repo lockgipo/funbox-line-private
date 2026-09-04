@@ -45,6 +45,7 @@
 
     var stores = [];
     var currentCity = "all";
+    var currentProduct = "all";
     var currentItem = null;
     var autoOpenTimer = null;
     var autoOpenScheduled = false;
@@ -196,7 +197,13 @@
     }
 
     function isDrawn(product) {
-        return !!drawnMap()[product.url];
+        if (!!drawnMap()[product.url]) return true;
+
+        // 一般列表已經變灰或點過時，快速抽選也必須略過。
+        if (product.link && product.link.classList.contains("clicked")) return true;
+        if (product.element && product.element.classList.contains("quick-drawn")) return true;
+
+        return false;
     }
 
     function syncDrawnRows() {
@@ -308,10 +315,27 @@
     }
 
 
+    function quickDrawModel(text) {
+        var match = String(text || "").toUpperCase().match(/\b(BXG|BGX|BX|UX|CX)\s*-\s*(\d{2})\b/);
+        if (!match) return "";
+        var prefix = match[1] === "BGX" ? "BXG" : match[1];
+        return prefix + "-" + match[2];
+    }
+
+    function quickDrawProductMatches(product) {
+        if (currentProduct === "all") return true;
+        return quickDrawModel(product.product) === currentProduct;
+    }
+
     function filteredStores() {
         return stores.filter(function (store) {
             var inSelectedCity = currentCity === "all" || store.city === currentCity;
-            return inSelectedCity && !isStoreSkipped(store);
+            if (!inSelectedCity || isStoreSkipped(store)) return false;
+
+            if (currentProduct === "all") return true;
+            return store.products.some(function (product) {
+                return quickDrawProductMatches(product);
+            });
         });
     }
 
@@ -327,6 +351,7 @@
             for (var p = 0; p < store.products.length; p++) {
                 var product = store.products[p];
 
+                if (!quickDrawProductMatches(product)) continue;
                 if (isDrawn(product)) continue;
                 if (!hasStarted(product)) continue;
 
@@ -425,9 +450,13 @@
         progress.textContent =
             "第 " + (candidate.storeIndex + 1) + " / " + list.length + " 家";
 
+        var matchedProductCount = candidate.store.products.filter(function (product) {
+            return quickDrawProductMatches(product);
+        }).length;
+
         storeEl.textContent =
             candidate.store.name + "　（" +
-            candidate.store.products.length + " 個抽選）";
+            matchedProductCount + " 個符合篩選）";
 
         productEl.textContent = candidate.product.product;
 
@@ -450,6 +479,15 @@
         currentCity = region || "all";
         render();
     }
+
+    function setProductFromTopFilter(product) {
+        currentProduct = product || "all";
+        render();
+    }
+
+    // 原作者的篩選程式可透過這兩個入口同步快速抽選的範圍。
+    window.syncQuickDrawRegion = setCityFromTopFilter;
+    window.syncQuickDrawProduct = setProductFromTopFilter;
 
     function openCurrent() {
         if (!currentItem || !currentItem.product) return;
@@ -616,14 +654,44 @@
         };
     }
 
+    function hookTopProductFilter() {
+        var oldProductFilter = window.filterDrawProduct;
+
+        window.filterDrawProduct = function (product) {
+            if (typeof oldProductFilter === "function") {
+                oldProductFilter(product);
+            }
+            setProductFromTopFilter(product);
+        };
+    }
+
     function init() {
         stores = collectStores();
         currentCity = "all";
+        currentProduct = "all";
+
+        try {
+            currentCity = localStorage.getItem("funbox_selected_draw_region") || "all";
+            currentProduct = localStorage.getItem("funbox_selected_draw_product") || "all";
+        } catch (e) {}
 
         migrateLegacyDrawnRecords();
         syncDrawnRows();
+
+        // 以畫面上的實際選項為準，避免瀏覽器留下的舊值與按鈕不同步。
+        var activeCityBtn = document.querySelector("#page-draws .draw-filter-btn-group .filter-btn.active");
+        if (activeCityBtn) {
+            var activeClick = activeCityBtn.getAttribute("onclick") || "";
+            var activeMatch = activeClick.match(/filterDrawRegion\('([^']+)'/);
+            if (activeMatch) currentCity = activeMatch[1];
+        }
+
+        var productSelect = document.getElementById("drawProductFilter");
+        if (productSelect) currentProduct = productSelect.value || "all";
+
         render();
         hookTopCityButtons();
+        hookTopProductFilter();
 
         $id("continuousDrawOpen").onclick = openCurrent;
         $id("continuousDrawNext").onclick = completeAndOpenNext;

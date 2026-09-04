@@ -22,7 +22,7 @@
    node tools/sync-upstream.mjs
    ```
 
-2. 工具會先檢查原作者的重要頁面結構，確認其抽選邏輯沒有未審查的變更，並確認處理前後的抽獎連結數量與順序完全相同。
+2. 工具會先檢查原作者的重要頁面結構及所有頁面程式，確認沒有未審查的變更；抽獎網址也必須是 `lin.ee`，且處理前後的連結數量與順序完全相同。
 3. 通過後只會產生 `preview/index.html`、`preview/custom/continuous-draw.css` 與 `preview/custom/continuous-draw.js`，不會碰正式的 `index.html`。
 4. 先在手機或電腦測試預覽：縣市篩選、開啟 LINE、返回後自動接力、全螢幕停止、跳過店家與復原。
 5. 確認預覽正常後，才執行正式套用：
@@ -35,9 +35,11 @@
 
 如果原作者改了頁面結構或抽選程式，工具會直接報錯並停止，不會產生或覆寫正式檔案。此時保留目前線上版，先比較對方的新邏輯、視需要更新自訂模組，確認後再更新 `tools/upstream-baseline.json`。
 
-## GitHub 上手動檢查
+## GitHub 自動同步
 
-`.github/workflows/check-upstream.yml` 提供一個只能手動啟動的「檢查原作者更新」流程。它只建立可下載的 `funbox-line-preview` 預覽檔，不會部署網站、提交程式碼或改掉正式版。
+`.github/workflows/check-upstream.yml` 會在每小時第 17 分自動檢查原作者。通過結構、程式版本及抽獎連結順序檢查後，只有內容確實改變時才提交新版 `index.html`；GitHub Pages 隨後會自動發布。也可以從 GitHub Actions 手動啟動。
+
+如果原作者修改了尚未審查的連續抽選程式或重要頁面結構，流程會失敗並保留目前正式版，不會提交或發布不相容內容。
 
 ## 記錄如何延續
 
