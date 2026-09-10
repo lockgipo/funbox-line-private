@@ -46,6 +46,7 @@
     var stores = [];
     var currentCity = "all";
     var currentProduct = "all";
+    var currentTime = "all";
     var currentItem = null;
     var autoOpenTimer = null;
     var autoOpenScheduled = false;
@@ -57,6 +58,8 @@
 
         document.querySelectorAll("#page-draws .draw-store").forEach(function (storeEl) {
             var city = storeEl.getAttribute("data-draw-city") || "未分類";
+            var startTime = storeEl.getAttribute("data-draw-start-time") || "";
+            var storeStart = getStoreStartTime(storeEl);
             var nameEl = storeEl.querySelector(".draw-store-name");
             var name = nameEl ? nameEl.textContent.trim() : "";
             var products = [];
@@ -69,6 +72,7 @@
                 products.push({
                     product: productEl.textContent.trim(),
                     url: linkEl.href,
+                    startAt: storeStart ? storeStart.getTime() : null,
                     element: itemEl,
                     link: linkEl
                 });
@@ -78,6 +82,7 @@
                 result.push({
                     city: city,
                     name: name,
+                    startTime: startTime,
                     products: products,
                     element: storeEl
                 });
@@ -226,12 +231,17 @@
     // （8/29 11:00才開始）
     // （8/29 11:00開始）
     // (8/29 11:00才開始)
-    function getProductStartTime(productText) {
+    function getProductStartTime(product) {
+        var productText = typeof product === "string" ? product : product.product;
         var match = productText.match(
             /[（(]\s*(\d{1,2})\s*\/\s*(\d{1,2})\s+([01]?\d|2[0-3]):([0-5]\d)\s*(?:才)?開始\s*[）)]/
         );
 
-        if (!match) return null;
+        if (!match) {
+            return typeof product === "object" && product.startAt
+                ? new Date(product.startAt)
+                : null;
+        }
 
         var now = new Date();
         var year = now.getFullYear();
@@ -250,8 +260,34 @@
         return start;
     }
 
+    function getStoreStartTime(storeEl) {
+        var startEl = storeEl && storeEl.querySelector(".draw-start");
+        var text = startEl ? startEl.textContent : "";
+        var match = text.match(
+            /(\d{4})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s+([01]?\d|2[0-3]):([0-5]\d)/
+        );
+        if (!match) {
+            var dateMatch = text.match(/(\d{4})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})/);
+            var timeMatch = (storeEl.getAttribute("data-draw-start-time") || "").match(
+                /^([01]?\d|2[0-3]):([0-5]\d)$/
+            );
+            if (!dateMatch || !timeMatch) return null;
+            match = ["", dateMatch[1], dateMatch[2], dateMatch[3], timeMatch[1], timeMatch[2]];
+        }
+
+        return new Date(
+            parseInt(match[1], 10),
+            parseInt(match[2], 10) - 1,
+            parseInt(match[3], 10),
+            parseInt(match[4], 10),
+            parseInt(match[5], 10),
+            0,
+            0
+        );
+    }
+
     function hasStarted(product) {
-        var start = getProductStartTime(product.product);
+        var start = getProductStartTime(product);
         return !start || new Date() >= start;
     }
 
@@ -267,6 +303,9 @@
             if (!productEl || !linkEl) return;
 
             var start = getProductStartTime(productEl.textContent.trim());
+            if (!start) {
+                start = getStoreStartTime(itemEl.closest(".draw-store"));
+            }
 
             if (!start) {
                 linkEl.classList.remove("not-started");
@@ -331,6 +370,9 @@
         return stores.filter(function (store) {
             var inSelectedCity = currentCity === "all" || store.city === currentCity;
             if (!inSelectedCity || isStoreSkipped(store)) return false;
+
+            var inSelectedTime = currentTime === "all" || store.startTime === currentTime;
+            if (!inSelectedTime) return false;
 
             if (currentProduct === "all") return true;
             return store.products.some(function (product) {
@@ -485,9 +527,15 @@
         render();
     }
 
-    // 原作者的篩選程式可透過這兩個入口同步快速抽選的範圍。
+    function setTimeFromTopFilter(time) {
+        currentTime = time || "all";
+        render();
+    }
+
+    // 原作者的篩選程式可透過這些入口同步快速抽選的範圍。
     window.syncQuickDrawRegion = setCityFromTopFilter;
     window.syncQuickDrawProduct = setProductFromTopFilter;
+    window.syncQuickDrawTime = setTimeFromTopFilter;
 
     function openCurrent() {
         if (!currentItem || !currentItem.product) return;
@@ -665,14 +713,27 @@
         };
     }
 
+    function hookTopTimeFilter() {
+        var oldTimeFilter = window.filterDrawTime;
+
+        window.filterDrawTime = function (time, btnElement) {
+            if (typeof oldTimeFilter === "function") {
+                oldTimeFilter(time, btnElement);
+            }
+            setTimeFromTopFilter(time);
+        };
+    }
+
     function init() {
         stores = collectStores();
         currentCity = "all";
         currentProduct = "all";
+        currentTime = "all";
 
         try {
             currentCity = localStorage.getItem("funbox_selected_draw_region") || "all";
             currentProduct = localStorage.getItem("funbox_selected_draw_product") || "all";
+            currentTime = localStorage.getItem("funbox_selected_draw_time") || "all";
         } catch (e) {}
 
         migrateLegacyDrawnRecords();
@@ -689,9 +750,15 @@
         var productSelect = document.getElementById("drawProductFilter");
         if (productSelect) currentProduct = productSelect.value || "all";
 
+        var activeTimeBtn = document.querySelector("#page-draws .time-filter-btn.active");
+        if (activeTimeBtn) {
+            currentTime = activeTimeBtn.getAttribute("data-time-filter") || "all";
+        }
+
         render();
         hookTopCityButtons();
         hookTopProductFilter();
+        hookTopTimeFilter();
 
         $id("continuousDrawOpen").onclick = openCurrent;
         $id("continuousDrawNext").onclick = completeAndOpenNext;
