@@ -197,14 +197,23 @@ async function validateBaseline(validation) {
 
   if (baseline.continuousDrawScriptSha256 !== validation.scriptSha256) {
     throw new Error(
-      "原作者的連續抽選程式已改變。為避免漏掉新邏輯，請先人工比較並更新自訂模組與 upstream-baseline.json",
+      `原作者的連續抽選程式已改變。為避免漏掉新邏輯，請先人工比較並更新自訂模組與 upstream-baseline.json（目前：${validation.scriptSha256}）`,
     );
   }
   if (baseline.supportingScriptsSha256 !== validation.supportingScriptsSha256) {
     throw new Error(
-      "原作者的其他頁面程式已改變。為避免自動發布不相容內容，請先人工比較並更新 upstream-baseline.json",
+      `原作者的其他頁面程式已改變。為避免自動發布不相容內容，請先人工比較並更新 upstream-baseline.json（目前：${validation.supportingScriptsSha256}）`,
     );
   }
+}
+
+function replaceSimpleElement(html, startMarker, replacement, label) {
+  const start = html.indexOf(startMarker);
+  const endStart = html.indexOf("</div>", start + startMarker.length);
+  if (start < 0 || endStart < 0) {
+    throw new Error(`無法替換 ${label}`);
+  }
+  return html.slice(0, start) + replacement.trimEnd() + html.slice(endStart + "</div>".length);
 }
 
 function replaceSpan(html, startMarker, endMarker, replacement, label) {
@@ -222,7 +231,7 @@ function injectModules(upstreamHtml, uiTemplate, validation) {
   const { markers } = validation;
 
   let output = upstreamHtml.replace("</head>", `${CSS_REF}\n</head>`);
-  output = replaceSpan(output, markers.guide, markers.filters, guideHtml, "使用說明");
+  output = replaceSimpleElement(output, markers.guide, guideHtml, "使用說明");
   output = replaceSpan(output, markers.panel, markers.list, panelHtml, "連續抽選控制區");
 
   const scriptMarkerPosition = output.indexOf(markers.script);
