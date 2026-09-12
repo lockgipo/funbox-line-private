@@ -36,6 +36,15 @@
     text-align: center;
 }
 
+#page-draws .draw-item.quick-drawn {
+    background: #d9d9d9 !important;
+    color: #666 !important;
+}
+
+#page-draws .draw-item.not-started {
+    cursor: not-allowed !important;
+}
+
 .continuous-draw-guide{
     margin:10px 0 12px;
     padding:10px 12px;
