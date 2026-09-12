@@ -2,11 +2,60 @@
 (function () {
     "use strict";
 
+    // 本站的全自動接力由此模組控制；原作者整列點擊維持單筆手動模式。
+    window.funboxDrawMode = "manual";
+
     var DRAWN_KEY = "funbox_continuous_draw_v9_drawn";
     var SKIPPED_STORES_KEY = "funbox_continuous_draw_skipped_stores";
     var PENDING_OPEN_KEY = "funbox_continuous_draw_pending_open";
     var LAST_COMPLETED_KEY = "funbox_continuous_draw_last_completed";
     var AUTO_CHAIN_KEY = "funbox_continuous_draw_auto_chain";
+
+    function getDrawLinkElement(itemEl) {
+        return itemEl ? itemEl.querySelector(".draw-link") : null;
+    }
+
+    function getDrawUrl(itemEl, linkEl) {
+        if (!itemEl) return "";
+        return itemEl.getAttribute("data-draw-href") ||
+            (linkEl && linkEl.href) ||
+            "";
+    }
+
+    function setStartedState(itemEl, linkEl, started, start) {
+        var stateEl = linkEl || itemEl;
+        if (!stateEl) return;
+
+        itemEl.classList.toggle("not-started", !started);
+        if (linkEl) {
+            linkEl.classList.toggle("not-started", !started);
+        }
+
+        if (started) {
+            stateEl.removeAttribute("aria-disabled");
+            stateEl.title = "";
+            if (linkEl) {
+                if (linkEl.textContent.trim() === "尚未開始") {
+                    linkEl.textContent = "抽獎";
+                }
+                linkEl.removeAttribute("tabindex");
+            }
+            return;
+        }
+
+        stateEl.setAttribute("aria-disabled", "true");
+        stateEl.title =
+            "尚未到開始時間：" +
+            (start.getMonth() + 1) + "/" +
+            start.getDate() + " " +
+            String(start.getHours()).padStart(2, "0") + ":" +
+            String(start.getMinutes()).padStart(2, "0");
+        if (linkEl) {
+            linkEl.textContent = "尚未開始";
+            linkEl.setAttribute("tabindex", "-1");
+        }
+    }
+
     // 將舊版「已變灰／已點過」的抽獎按鈕同步到快速抽選紀錄。
     // 同一個網址下，換 HTML 不會清掉 localStorage；這裡把舊紀錄補進新的 DRAWN_KEY。
     function migrateLegacyDrawnRecords() {
@@ -14,18 +63,17 @@
         var changed = false;
 
         document.querySelectorAll("#page-draws .draw-item").forEach(function (itemEl) {
-            var linkEl = itemEl.querySelector(".draw-link");
-            if (!linkEl) return;
-
-            var href = linkEl.href || "";
+            var linkEl = getDrawLinkElement(itemEl);
+            var stateEl = linkEl || itemEl;
+            var href = getDrawUrl(itemEl, linkEl);
             if (!href) return;
 
             // 舊版按鈕已經是灰色，或保留了 clicked 狀態，就視為以前抽過。
-            var computed = window.getComputedStyle(linkEl);
+            var computed = window.getComputedStyle(stateEl);
             var bg = (computed.backgroundColor || "").replace(/\s/g, "");
             var isLegacyGray =
-                linkEl.classList.contains("clicked") ||
-                linkEl.classList.contains("quick-drawn") ||
+                stateEl.classList.contains("clicked") ||
+                itemEl.classList.contains("quick-drawn") ||
                 bg === "rgb(160,160,160)" ||
                 bg === "rgb(169,169,169)" ||
                 bg === "rgb(217,217,217)";
@@ -66,12 +114,13 @@
 
             storeEl.querySelectorAll(".draw-item").forEach(function (itemEl) {
                 var productEl = itemEl.querySelector(".draw-product");
-                var linkEl = itemEl.querySelector(".draw-link");
-                if (!productEl || !linkEl || !linkEl.href) return;
+                var linkEl = getDrawLinkElement(itemEl);
+                var url = getDrawUrl(itemEl, linkEl);
+                if (!productEl || !url) return;
 
                 products.push({
                     product: productEl.textContent.trim(),
-                    url: linkEl.href,
+                    url: url,
                     startAt: storeStart ? storeStart.getTime() : null,
                     element: itemEl,
                     link: linkEl
@@ -135,6 +184,26 @@
         return Object.keys(skippedStoresMap()).length;
     }
 
+    function setVisitedRowId(product, visited) {
+        if (!product || !product.element) return;
+        var rowId = product.element.getAttribute("data-draw-id");
+        if (!rowId) return;
+
+        var ids = [];
+        try {
+            ids = JSON.parse(localStorage.getItem("visited_draw_links") || "[]");
+        } catch (e) {}
+        if (!Array.isArray(ids)) ids = [];
+
+        var index = ids.indexOf(rowId);
+        if (visited && index === -1) ids.push(rowId);
+        if (!visited && index !== -1) ids.splice(index, 1);
+
+        try {
+            localStorage.setItem("visited_draw_links", JSON.stringify(ids));
+        } catch (e) {}
+    }
+
     function markDrawn(product) {
         var map = drawnMap();
         map[product.url] = true;
@@ -144,6 +213,7 @@
             product.link.classList.add("clicked");
         }
         product.element.classList.add("quick-drawn");
+        setVisitedRowId(product, true);
     }
 
     function unmarkDrawn(url) {
@@ -155,7 +225,8 @@
             store.products.forEach(function (product) {
                 if (product.url !== url) return;
                 product.element.classList.remove("quick-drawn");
-                product.link.classList.remove("clicked");
+                if (product.link) product.link.classList.remove("clicked");
+                setVisitedRowId(product, false);
             });
         });
     }
@@ -218,10 +289,10 @@
             store.products.forEach(function (product) {
                 if (map[product.url]) {
                     product.element.classList.add("quick-drawn");
-                    product.link.classList.add("clicked");
+                    if (product.link) product.link.classList.add("clicked");
                 } else {
                     product.element.classList.remove("quick-drawn");
-                    product.link.classList.remove("clicked");
+                    if (product.link) product.link.classList.remove("clicked");
                 }
             });
         });
@@ -299,8 +370,8 @@
 
         document.querySelectorAll("#page-draws .draw-item").forEach(function (itemEl) {
             var productEl = itemEl.querySelector(".draw-product");
-            var linkEl = itemEl.querySelector(".draw-link");
-            if (!productEl || !linkEl) return;
+            var linkEl = getDrawLinkElement(itemEl);
+            if (!productEl || !getDrawUrl(itemEl, linkEl)) return;
 
             var start = getProductStartTime(productEl.textContent.trim());
             if (!start) {
@@ -308,38 +379,18 @@
             }
 
             if (!start) {
-                linkEl.classList.remove("not-started");
-                if (linkEl.textContent.trim() === "尚未開始") {
-                    linkEl.textContent = "抽獎";
-                }
+                setStartedState(itemEl, linkEl, true, null);
                 return;
             }
 
             // 已抽的狀態不被時間同步覆蓋。
             if (itemEl.classList.contains("quick-drawn") ||
-                linkEl.classList.contains("clicked")) {
-                linkEl.classList.remove("not-started");
+                (linkEl && linkEl.classList.contains("clicked"))) {
+                setStartedState(itemEl, linkEl, true, start);
                 return;
             }
 
-            if (now >= start) {
-                linkEl.classList.remove("not-started");
-                linkEl.textContent = "抽獎";
-                linkEl.removeAttribute("aria-disabled");
-                linkEl.removeAttribute("tabindex");
-                linkEl.title = "";
-            } else {
-                linkEl.classList.add("not-started");
-                linkEl.textContent = "尚未開始";
-                linkEl.setAttribute("aria-disabled", "true");
-                linkEl.setAttribute("tabindex", "-1");
-                linkEl.title =
-                    "尚未到開始時間：" +
-                    (start.getMonth() + 1) + "/" +
-                    start.getDate() + " " +
-                    String(start.getHours()).padStart(2, "0") + ":" +
-                    String(start.getMinutes()).padStart(2, "0");
-            }
+            setStartedState(itemEl, linkEl, now >= start, start);
         });
     }
 
@@ -516,6 +567,8 @@
             ? "✅ 已完成，顯示下一個"
             : "✅ 手動標記完成";
     }
+
+    window.funboxContinuousDrawRefresh = render;
 
     function setCityFromTopFilter(region) {
         currentCity = region || "all";
