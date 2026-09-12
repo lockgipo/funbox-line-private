@@ -92,19 +92,37 @@ function assertExactlyOnce(html, marker, label) {
   }
 }
 
-function countClassToken(html, className) {
-  const pattern = new RegExp(`\\b${className.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b`, "g");
-  return (html.match(pattern) || []).length;
+function hasClassToken(tag, className) {
+  const match = tag.match(/\bclass\s*=\s*(["'])(.*?)\1/i);
+  return !!match && match[2].split(/\s+/).includes(className);
+}
+
+function getTagAttribute(tag, attributeName) {
+  const escapedName = attributeName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(new RegExp(`\\b${escapedName}\\s*=\\s*(["'])(.*?)\\1`, "i"));
+  return match ? match[2] : "";
+}
+
+function countElementsWithClass(html, className) {
+  const tags = html.match(/<[a-z][^>]*>/gi) || [];
+  return tags.filter((tag) => hasClassToken(tag, className)).length;
 }
 
 function extractDrawLinks(html) {
-  const tags = html.match(/<a\b[^>]*>/gi) || [];
+  const tags = html.match(/<[a-z][^>]*>/gi) || [];
+  const rowLinks = tags
+    .filter((tag) => hasClassToken(tag, "draw-item"))
+    .map((tag) => getTagAttribute(tag, "data-draw-href"))
+    .filter(Boolean);
+
+  // 新版把整個商品列設為連結；過渡版本同時保留 data-draw-href 與舊的 <a>。
+  // 優先使用商品列上的網址，避免同一個抽選被重複計算。
+  if (rowLinks.length) return rowLinks;
+
   return tags
-    .filter((tag) => /\bclass\s*=\s*["'][^"']*\bdraw-link\b[^"']*["']/i.test(tag))
-    .map((tag) => {
-      const match = tag.match(/\bhref\s*=\s*(["'])(.*?)\1/i);
-      return match ? match[2] : "";
-    });
+    .filter((tag) => /^<a\b/i.test(tag) && hasClassToken(tag, "draw-link"))
+    .map((tag) => getTagAttribute(tag, "href"))
+    .filter(Boolean);
 }
 
 async function loadSource(source) {
@@ -124,16 +142,27 @@ async function loadSource(source) {
 }
 
 function validateUpstream(html) {
+  const guideMarkers = [
+    '<div class="continuous-draw-guide">',
+    '<div class="draw-mode-panel" id="drawModePanel">',
+  ];
+  const guide = guideMarkers.find((marker) => countText(html, marker) === 1);
+  if (!guide) {
+    throw new Error("找不到唯一的原作者操作模式區塊");
+  }
+
+  const panelMarker = '<div class="continuous-draw-panel" id="continuousDrawPanel">';
   const markers = {
     page: 'id="page-draws"',
-    guide: '<div class="continuous-draw-guide">',
+    guide,
     filters: '<div class="draw-filter-btn-group">',
-    panel: '<div class="continuous-draw-panel" id="continuousDrawPanel">',
+    panel: countText(html, panelMarker) === 1 ? panelMarker : null,
     list: '<div class="draw-list">',
     script: "/* ===== Funbox 連續抽選模式：依商品開始時間自動判斷 ===== */",
   };
 
   for (const [key, marker] of Object.entries(markers)) {
+    if (key === "panel" && marker === null) continue;
     assertExactlyOnce(html, marker, `上游結構 ${key}`);
   }
   assertExactlyOnce(html, "</head>", "</head>");
@@ -143,15 +172,18 @@ function validateUpstream(html) {
   }
 
   const counts = {
-    stores: countClassToken(html, "draw-store"),
-    items: countClassToken(html, "draw-item"),
+    stores: countElementsWithClass(html, "draw-store"),
+    items: countElementsWithClass(html, "draw-item"),
     links: extractDrawLinks(html).length,
   };
   if (counts.stores < 1 || counts.items < 1 || counts.links < 1) {
     throw new Error(`找不到完整抽獎資料：店家 ${counts.stores}、品項 ${counts.items}、連結 ${counts.links}`);
   }
 
-  const order = [markers.guide, markers.filters, markers.panel, markers.list].map((marker) => html.indexOf(marker));
+  const orderedMarkers = [markers.guide, markers.filters];
+  if (markers.panel) orderedMarkers.push(markers.panel);
+  orderedMarkers.push(markers.list);
+  const order = orderedMarkers.map((marker) => html.indexOf(marker));
   if (!order.every((position, index) => index === 0 || position > order[index - 1])) {
     throw new Error("原作者頁面的篩選器、控制區或抽獎清單順序已改變");
   }
@@ -207,13 +239,34 @@ async function validateBaseline(validation) {
   }
 }
 
-function replaceSimpleElement(html, startMarker, replacement, label) {
+function replaceDivElement(html, startMarker, replacement, label) {
   const start = html.indexOf(startMarker);
-  const endStart = html.indexOf("</div>", start + startMarker.length);
-  if (start < 0 || endStart < 0) {
+  if (start < 0) {
     throw new Error(`無法替換 ${label}`);
   }
-  return html.slice(0, start) + replacement.trimEnd() + html.slice(endStart + "</div>".length);
+
+  const divTag = /<\/?div\b[^>]*>/gi;
+  divTag.lastIndex = start;
+  let depth = 0;
+  let end = -1;
+  let match;
+  while ((match = divTag.exec(html))) {
+    if (match.index === start || depth > 0) {
+      if (/^<\/div/i.test(match[0])) {
+        depth -= 1;
+        if (depth === 0) {
+          end = divTag.lastIndex;
+          break;
+        }
+      } else {
+        depth += 1;
+      }
+    }
+  }
+  if (end < 0) {
+    throw new Error(`無法判斷 ${label} 的結束位置`);
+  }
+  return html.slice(0, start) + replacement.trimEnd() + html.slice(end);
 }
 
 function replaceSpan(html, startMarker, endMarker, replacement, label) {
@@ -231,8 +284,12 @@ function injectModules(upstreamHtml, uiTemplate, validation) {
   const { markers } = validation;
 
   let output = upstreamHtml.replace("</head>", `${CSS_REF}\n</head>`);
-  output = replaceSimpleElement(output, markers.guide, guideHtml, "使用說明");
-  output = replaceSpan(output, markers.panel, markers.list, panelHtml, "連續抽選控制區");
+  output = replaceDivElement(output, markers.guide, guideHtml, "使用說明或抽選模式");
+  if (markers.panel) {
+    output = replaceSpan(output, markers.panel, markers.list, panelHtml, "連續抽選控制區");
+  } else {
+    output = output.replace(markers.list, `${panelHtml.trimEnd()}\n${markers.list}`);
+  }
 
   const scriptMarkerPosition = output.indexOf(markers.script);
   const scriptStart = output.lastIndexOf("<script", scriptMarkerPosition);
